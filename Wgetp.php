@@ -208,7 +208,7 @@ class Wgetp {
 			'imgDirectory'    => 'img',
 			'wgetPath'        => '/usr/bin/wget',
 			'userAgent'       => 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1700.76 Safari/537.36',
-			'excludedDomains' => array('fonts.googleapis.com', 'fast.fonts.com' ,'use.typekit.net'),
+			'excludedDomains' => array('fonts.googleapis.com', 'maps.googleapis.com', 'fast.fonts.com' ,'use.typekit.net'),
 			'htmlFilename'    => 'index.html',
 		), $settings);
 
@@ -252,6 +252,7 @@ class Wgetp {
 			'--adjust-extension',
 			'--no-cache',
 			'--user-agent="' . $this->settings['userAgent'] . '"',
+			'--no-check-certificate',
 			'--user=' . $this->user,
 			'--password=' . $this->pass,
 		);
@@ -298,6 +299,7 @@ class Wgetp {
 			'--adjust-extension',
 			'--no-cache',
 			'--user-agent="' . $this->settings['userAgent'] . '"',
+			'--no-check-certificate',
 			'--convert-links',
 			'--page-requisites',
 			'--exclude-domains=' . implode(',', $this->settings['excludedDomains']),
@@ -431,10 +433,22 @@ class Wgetp {
 					$filePath = $this->settings['location'] . '/' . $this->settings['cssDirectory'] . '/' . basename($oldCssHref);
 					$sourceUrl = Http::build_url($this->url, $oldCssHref);
 
-					file_put_contents($filePath, file_get_contents($sourceUrl));
-
 					$patterns[] = $oldCssHref;
-					$replacements[] = $newCssHref;
+
+					$content = @file_get_contents($sourceUrl);
+
+					if ($content) {
+
+						file_put_contents($filePath, $content);
+
+						$replacements[] = $newCssHref;
+
+					} else {
+
+						$replacements[] = $sourceUrl;
+
+					}
+
 				}
 
 			}
@@ -451,10 +465,21 @@ class Wgetp {
 					$filePath = $this->settings['location'] . '/' . $this->settings['jsDirectory'] . '/' . basename($oldJsSrc);
 					$sourceUrl = Http::build_url($this->url, $oldJsSrc);
 
-					file_put_contents($filePath, file_get_contents($sourceUrl));
-
 					$patterns[] = $oldJsSrc;
-					$replacements[] = $newJsSrc;
+
+					$content = @file_get_contents($sourceUrl);
+
+					if ($content) {
+
+						file_put_contents($filePath, $content);
+
+						$replacements[] = $newJsSrc;
+
+					} else {
+
+						$replacements[] = $sourceUrl;
+
+					}
 
 				}
 
@@ -472,10 +497,21 @@ class Wgetp {
 					$filePath = $this->settings['location'] . '/' . $this->settings['imgDirectory'] . '/' . basename($oldImgSrc);
 					$sourceUrl = Http::build_url($this->url, $oldImgSrc);
 
-					file_put_contents($filePath, file_get_contents($sourceUrl));
-
 					$patterns[] = $oldImgSrc;
-					$replacements[] = $newImgSrc;
+
+					$content = @file_get_contents($sourceUrl);
+
+					if ($content) {
+
+						file_put_contents($filePath, $content);
+
+						$replacements[] = $newImgSrc;
+
+					} else {
+
+						$replacements[] = $sourceUrl;
+
+					}
 
 				}
 
@@ -626,8 +662,9 @@ class Wgetp {
 
 		}
 
-		// TODO: Replace glob with FilesystemIterator.
-		foreach (glob($this->settings['location'] . '/' . $this->settings['cssDirectory'] . '/*.*') as $cssFile) {
+		$cssFiles = new FilesystemIterator($this->settings['location'] . '/' . $this->settings['cssDirectory']);
+
+		foreach ($cssFiles as $cssFile) {
 
 			$this->processCssFile($cssFile);
 
@@ -701,7 +738,11 @@ class Wgetp {
 
 				} elseif (Http::is_relative_url($resourceUrl)) {
 
-					$fileExtension = pathinfo(parse_url($resourceUrl, PHP_URL_PATH), PATHINFO_EXTENSION);
+					$newResourceUrl = $resourceUrl;
+
+					$filePath = parse_url(urldecode($resourceUrl), PHP_URL_PATH);
+
+					$fileExtension = pathinfo($filePath, PATHINFO_EXTENSION);
 
 					if ($fileExtension === 'eot' || $fileExtension === 'otf' || $fileExtension === 'svg'|| $fileExtension === 'ttf' || $fileExtension === 'woff') {
 
@@ -712,6 +753,14 @@ class Wgetp {
 						// TODO: Process files?
 						$subDirectory = $this->settings['jsDirectory'];
 
+					} elseif ($fileExtension === '1') {
+
+						// TODO: .eot.1 may be common but its not the only time a .1 could happen.
+						$subDirectory = $this->settings['fontsDirectory'];
+
+						$newResourceUrl = pathinfo($filePath, PATHINFO_FILENAME) . '#iefix';
+
+
 					} else {
 
 						$subDirectory = $this->settings['imgDirectory'];
@@ -721,7 +770,7 @@ class Wgetp {
 					$this->moveRelatedFile($resourceUrl, $subDirectory);
 
 					$patterns[] = '~url\([\'\"]?' . $resourceUrl . '[\'\"]?\)~';
-					$replacements[] = 'url("' . $pathPrefix . $subDirectory. '/' . $resourceUrl . '")';
+					$replacements[] = 'url("' . $pathPrefix . $subDirectory. '/' . $newResourceUrl . '")';
 
 
 				} else {
@@ -766,8 +815,9 @@ class Wgetp {
 
 		}
 
-		// TODO: Replace glob with FilesystemIterator.
-		foreach (glob($this->settings['location'] . '/' . $this->settings['jsDirectory'] . '/*.*') as $jsFile) {
+		$jsFiles = new FilesystemIterator($this->settings['location'] . '/' . $this->settings['jsDirectory']);
+
+		foreach ($jsFiles as $jsFile) {
 
 			$this->processJsFile($jsFile);
 
@@ -878,6 +928,7 @@ class Wgetp {
 
 		$this->DOMDocument->saveHTMLFile($htmlFilePath);
 		$htmlContent = Tidyp::repairFile($htmlFilePath, true);
+		$htmlContent = str_replace(array($this->tmpHtmlFilename . '#', $this->tmpHtmlFilename), array('#', $this->url), $htmlContent);
 
 		file_put_contents($htmlFilePath, $htmlContent);
 
@@ -944,8 +995,9 @@ class Tidyp {
 	 */
 	public static function repairFile($file, $strict = false) {
 
-		$originalEmptyTags = array('<span', 'span>', '<i>', '<i ', 'i>',);
-		$tmpEmptyTags = array('<tidyspan', 'tidyspan>', '<tidyi>', '<tidyi ', 'tidyi>');
+		// TODO: bugging out tags breaks some times
+		$originalEmptyTags = array('<span', 'span>', '<i>', '<i ', '/i>');
+		$tmpEmptyTags = array('<tidyspan', 'tidyspan>', '<tidyi>', '<tidyi ', '/tidyi>');
 
 		$html = file_get_contents($file);
 		$html = str_replace($originalEmptyTags, $tmpEmptyTags, $html);
@@ -978,16 +1030,17 @@ class Tidyp {
 
 		if ($strict) {
 
+			$html = self::repairOpenNocripts($html);
+			$html = self::repairCloseNocripts($html);
 			$html = self::repairOpenComments($html);
 			$html = self::repairCloseComments($html);
 			$html = self::repairOpenScripts($html);
 			$html = self::repairCloseScripts($html);
-			$html = self::repairOpenNocripts($html);
-			$html = self::repairCloseNocripts($html);
 
 		} else {
 
-			$html = preg_replace('|^(\t*)(.*?)><!--|m', '$1$2>' ."\n". '$1<!--', $html);
+			$html = preg_replace('|^(\t*)(.*?)><\!--|m', '$1$2>' ."\n". '$1<!--', $html);
+			$html = preg_replace('|^(\t*)<\!--(.*?)<\!\[|ms', '$1<!--$2$1<![', $html);
 			$html = preg_replace('|^(\t*)(.*?)><script|m', '$1$2>' ."\n". '$1<script', $html);
 			$html = preg_replace('|^(\t*)(.*?)><noscript|m', '$1$2>' ."\n". '$1<noscript', $html);
 			$html = preg_replace('|^(\t*)(.*?)><\/noscript|m', '$1$2>' ."\n". '$1</noscript', $html);
@@ -995,53 +1048,6 @@ class Tidyp {
 		}
 
 		return $html;
-
-	}
-
-	/**
-	 * Indents opening comments properly
-	 *
-	 * @param string $html The HTML to be tidied.
-	 * @return string Returns tidied HTML.
-	 */
-	public static function repairOpenComments($html) {
-
-		$count = preg_match_all('|(\t*)(.*?)><!--|m', $html, $matches);
-
-		if ($count >= 1) {
-
-			$html = preg_replace('|^(\t*)(.*?)><!--|m', '$1$2>' ."\n". '$1<!--', $html);
-			return self::repairOpenComments($html);
-
-		} else {
-
-			return $html;
-
-		}
-
-	}
-
-	/**
-	 * Indents closing comments properly
-	 *
-	 * @param string $html The HTML to be tidied.
-	 * @return string Returns tidied HTML.
-	 */
-	public static function repairCloseComments($html) {
-
-		$count = preg_match_all('|(\t*)(.*?)><\!\[|m', $html, $matches);
-
-		if ($count >= 1) {
-
-			$html = preg_replace('|^(\t*)(.*?)><\!\[|m', '$1$2>' ."\n". '$1<![', $html);
-
-			return self::repairCloseNocripts($html);
-
-		} else {
-
-			return $html;
-
-		}
 
 	}
 
@@ -1118,6 +1124,54 @@ class Tidyp {
 		if ($count >= 1) {
 
 			$html = preg_replace('|^(\t*)(.*?)><\/noscript|m', '$1$2>' ."\n". '$1</noscript', $html);
+
+			return self::repairCloseNocripts($html);
+
+		} else {
+
+			return $html;
+
+		}
+
+	}
+
+	/**
+	 * Indents opening comments properly
+	 *
+	 * @param string $html The HTML to be tidied.
+	 * @return string Returns tidied HTML.
+	 */
+	public static function repairOpenComments($html) {
+
+		$count = preg_match_all('|(\t*)(.*?)><\!--|m', $html, $matches);
+
+		if ($count >= 1) {
+
+			$html = preg_replace('|^(\t*)(.*?)><\!--|m', '$1$2>' ."\n". '$1<!--', $html);
+
+			return self::repairOpenComments($html);
+
+		} else {
+
+			return $html;
+
+		}
+
+	}
+
+	/**
+	 * Indents closing comments properly
+	 *
+	 * @param string $html The HTML to be tidied.
+	 * @return string Returns tidied HTML.
+	 */
+	public static function repairCloseComments($html) {
+
+		$count = preg_match_all('|(\t*)<\!--(.*?)<\!\[|ms', $html, $matches);
+
+		if ($count >= 1) {
+
+			$html = preg_replace('|^(\t*)<\!--(.*?)<\!\[|ms', '$1<!--$2$1<![', $html);
 
 			return self::repairCloseNocripts($html);
 
